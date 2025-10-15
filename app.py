@@ -28,13 +28,27 @@ if os.path.isdir("public"):
 
 
 def http_get_json(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
-    resp = requests.get(url, headers=headers or {"Accept": "application/json"}, timeout=30)
+    default_headers = {
+        "Accept": "application/json",
+        # Some APIs (e.g., Crossref) require a descriptive User-Agent
+        "User-Agent": os.environ.get("HTTP_USER_AGENT", "ai-search/0.1 (+https://localhost)"),
+    }
+    merged_headers = {**default_headers, **(headers or {})}
+    resp = requests.get(url, headers=merged_headers, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
 
-def search_openalex(q: str, per_page: int, cursor: str) -> Dict[str, Any]:
+def search_openalex_works(q: str, per_page: int, cursor: str) -> Dict[str, Any]:
     base = "https://api.openalex.org/works"
+    params = {"search": q or None, "per_page": per_page, "cursor": cursor or "*"}
+    url = f"{base}?{urlencode({k: v for k, v in params.items() if v})}"
+    data = http_get_json(url)
+    return data
+
+
+def search_openalex_authors(q: str, per_page: int, cursor: str) -> Dict[str, Any]:
+    base = "https://api.openalex.org/authors"
     params = {"search": q or None, "per_page": per_page, "cursor": cursor or "*"}
     url = f"{base}?{urlencode({k: v for k, v in params.items() if v})}"
     data = http_get_json(url)
@@ -115,14 +129,18 @@ def api_search(
     cursor: str = Query("*"),
 ):
     try:
-        if entity != "works":
-            return JSONResponse({"results": [], "meta": {"count": 0, "next_cursor": None}})
-        if source == "crossref":
-            data = search_crossref(q, per_page, cursor)
-        elif source == "arxiv":
-            data = search_arxiv(q, per_page, cursor)
-        else:
-            data = search_openalex(q, per_page, cursor)
+        if entity == "authors":
+            # Only OpenAlex supports authors in our API
+            if source != "openalex":
+                return JSONResponse({"results": [], "meta": {"count": 0, "next_cursor": None}})
+            data = search_openalex_authors(q, per_page, cursor)
+        else:  # works
+            if source == "crossref":
+                data = search_crossref(q, per_page, cursor)
+            elif source == "arxiv":
+                data = search_arxiv(q, per_page, cursor)
+            else:
+                data = search_openalex_works(q, per_page, cursor)
         return JSONResponse(data)
     except requests.HTTPError as e:
         return JSONResponse({"error": str(e), "details": getattr(e.response, "text", "")}, status_code=502)
