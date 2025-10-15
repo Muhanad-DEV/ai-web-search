@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Web Search</title>
+    <style>
+      :root {
+        /* Theme palette */
+        --bg: #D4EBF8;
+        --primary: #1F509A;
+        --primary-600: #0A3981;
+        --accent: #E38E49;
+        --text: #08203a;
+      }
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; background: var(--bg); color: var(--text); }
+      h1 { font-size: 1.8rem; margin: 0 0 1rem; letter-spacing: .2px; color: var(--primary-600); }
+      form { display: grid; grid-template-columns: 1fr auto auto auto; gap: .5rem; align-items: center; max-width: 1200px; position: sticky; top: 0; padding: .5rem 0; backdrop-filter: blur(6px); background: var(--bg); z-index: 10; }
+      input, select { font-size: 1rem; padding: .6rem .7rem; border-radius: .5rem; border: 1px solid color-mix(in oklab, var(--primary) 25%, var(--bg)); background: #fff; color: var(--text); }
+      button { cursor: pointer; font-size: 1rem; padding: .6rem .8rem; border-radius: .5rem; border: 1px solid var(--primary); background: var(--primary); color: #fff; }
+      button:hover { background: var(--primary-600); border-color: var(--primary-600); }
+      input:focus, select:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+      #keyword-filters { margin: 1rem 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; max-width: 1200px; align-items: stretch; grid-auto-rows: 1fr; }
+      #results { margin-top: 1rem; display: grid; gap: .9rem; max-width: 1200px; }
+      .card { border: 1px solid color-mix(in oklab, var(--primary) 25%, var(--bg)); border-radius: .75rem; padding: 1rem 1.1rem; background: #fff; transition: background .2s, border-color .2s, transform .06s; }
+      #keyword-filters > .card { height: 100%; display: flex; flex-direction: column; }
+      #keyword-filters > .card .row.keywords { flex: 1; align-content: flex-start; }
+      .card:hover { background: color-mix(in oklab, #fff 92%, var(--primary) 8%); border-color: color-mix(in oklab, var(--primary) 35%, var(--bg)); }
+      .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
+      .muted { opacity: .75; font-size: .9rem; }
+      .controls { display: flex; gap: .9rem; margin-top: 2.5rem; align-items: center; flex-wrap: wrap; }
+      .hidden { display: none; }
+      .badge { display: inline-flex; align-items: center; gap: .35rem; padding: .2rem .45rem; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; font-size: .8rem; background: color-mix(in oklab, var(--accent) 10%, #fff); }
+      .badge-oa { color: #0A7A5B; border-color: #0A7A5B; background: color-mix(in oklab, #0A7A5B 10%, #fff); }
+      .toolbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: 1.5rem; }
+      .toolbar button { background: var(--primary); color: #fff; }
+      .toolbar button:disabled { opacity: .6; }
+      /* Responsive layout */
+      @media (max-width: 1100px) {
+        form { grid-template-columns: 1fr auto auto; }
+        #keyword-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 720px) {
+        form { grid-template-columns: 1fr; }
+        #keyword-filters { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>AI Web Search</h1>
+    <form id="search-form">
+      <input id="q" type="search" placeholder="Search works or authors (e.g., transformers)" />
+      <select id="source">
+        <option value="openalex">OpenAlex</option>
+        <option value="crossref">Crossref</option>
+        <option value="arxiv">arXiv</option>
+      </select>
+      <select id="entity">
+        <option value="works">Works</option>
+        <option value="authors">Authors</option>
+      </select>
+      <button id="btn-search" type="submit">Search</button>
+    </form>
+
+    <div id="keyword-filters"></div>
+
+    <div class="controls toolbar" id="paging" aria-live="polite" aria-atomic="true" style="margin-top: 3rem;">
+      <button id="prev" type="button" disabled>Prev</button>
+      <button id="next" type="button" disabled>Next</button>
+      <span id="meta" class="muted"></span>
+      <button id="download-json" type="button" disabled>Download JSON</button>
+      <button id="download-csv" type="button" disabled>Download CSV</button>
+      <button id="download-all" type="button" disabled>Download All (JSON)</button>
+    </div>
+
+    <div id="results"></div>
+    <div class="controls" id="progress-wrap" aria-live="polite" aria-atomic="true">
+      <progress id="progress" value="0" max="1" style="width: 260px;"></progress>
+      <span id="progress-label" class="muted"></span>
+    </div>
+
+    <script>
+      // Inline keywords (replaces external JS)
+      const categories = [
+        { id: "technology", label: "Technology (MASS & Autonomy)", terms: [
+          "Maritime Autonomous Surface Ship*","Autonomous Ship*","Autonomous vessel*","Unmanned Ship*","Remote Ship*","smart ship*","Autonomous shipping","Remotely Operated Ship","Autonomous merchant ship*","Remote Operation Centre*","Remote Operating Centre","Remote control Centre*","shore control centre","Onshore operation centre"
+        ]},
+        { id: "human", label: "Human dimension", terms: [
+          "Human Element*","Human Factor*","Seafarer*","E-farer","non-seafarer*","Crew","Operator*","remote operator*","master*","navigator*","Trust in autonomy","onboard personnel","ship personnel","human oversight","human intervention","mariner*","Human-Machine Interaction","Dynamic human-machine system","Human-Machine teaming","Human-Machine cooperation"
+        ]},
+        { id: "competency", label: "Competencies & Policy", terms: [
+          "Competenc*","Skill*","Conceptual Framework*","Framework Develop*","Qualification*","Proficienc*","barrier*","challenge*","obstacle*","Training","Education","Responsibilities","barriers","challenges","Workload","Cognitive Load","Situational Awareness","Decision Making","curriculum development","training programs","guidelines","standards","Regulatory","IMO","Policy","STCW"
+        ]}
+      ];
+      function buildQueryFromSelections(selections) {
+        const parts = [];
+        for (const cat of categories) {
+          const chosen = selections[cat.id] && selections[cat.id].length ? selections[cat.id] : [];
+          if (chosen.length) parts.push(`(${chosen.join(" OR ")})`);
+        }
+        if (selections.extra && selections.extra.trim()) parts.push(`(${selections.extra.trim()})`);
+        return parts.join(" AND ");
+      }
+
+      const $ = (sel) => document.querySelector(sel);
+      const q = $("#q");
+      const sourceSel = $("#source");
+      const entity = $("#entity");
+      const form = $("#search-form");
+      const results = $("#results");
+      const prevBtn = $("#prev");
+      const nextBtn = $("#next");
+      const metaSpan = $("#meta");
+      const downloadJsonBtn = $("#download-json");
+      const downloadCsvBtn = $("#download-csv");
+      const downloadAllBtn = $("#download-all");
+      const progressEl = $("#progress");
+      const progressLabel = $("#progress-label");
+      const keywordFilters = $("#keyword-filters");
+
+      let lastQuery = { q: "", entity: "works", source: "openalex" };
+      /** @type {string|null} */
+      let cursor = "*";
+      /** @type {string[]} */
+      const cursorStack = [];
+
+      /** @type {any[]} */
+      let latestResults = [];
+      /** @type {Record<string,string[]>} */
+      const selectedByCategory = { technology: [], human: [], competency: [], extra: "" };
+
+      // Render keyword checkboxes per category
+      renderKeywordFilters();
+
+      // Switch entity availability based on source
+      sourceSel.addEventListener("change", () => {
+        if (sourceSel.value === "crossref" || sourceSel.value === "arxiv") {
+          entity.value = "works";
+          entity.disabled = true;
+        } else {
+          entity.disabled = false;
+        }
+        updateDownloadAllAvailability();
+      });
+
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        cursor = "*";
+        cursorStack.length = 0;
+        search();
+      });
+
+      prevBtn.addEventListener("click", () => {
+        if (!cursorStack.length) return;
+        cursor = cursorStack.pop() || "*";
+        search(true);
+      });
+
+      nextBtn.addEventListener("click", () => {
+        if (!nextBtn.dataset.next) return;
+        if (cursor) cursorStack.push(cursor);
+        cursor = nextBtn.dataset.next;
+        search();
+      });
+
+      const API_BASE = (window.API_BASE_OVERRIDE || "").trim();
+
+      async function search(isBack = false) {
+        const query = composeQuery();
+        const which = entity.value;
+        const source = sourceSel.value;
+        lastQuery = { q: query, entity: which, source };
+
+        results.textContent = "";
+        metaSpan.textContent = "Loading…";
+        prevBtn.disabled = cursorStack.length === 0;
+        nextBtn.disabled = true;
+        nextBtn.dataset.next = "";
+
+        try {
+          const qs = new URLSearchParams({ source, entity: which, q: query, per_page: String(10), cursor: String(cursor || '*') });
+          const url = `${API_BASE || ''}/api/search?${qs.toString()}`.replace(/\/+api/, '/api');
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`Backend error ${resp.status}`);
+          const data = await resp.json();
+          latestResults = Array.isArray(data.results) ? data.results : [];
+
+          // Open-access-first sorting for works
+          if (which === "works") {
+            const isOpen = (w) => source === "openalex"
+              ? Boolean((w && w.best_oa_location) || (w && w.open_access && w.open_access.is_oa))
+              : (source === "crossref"
+                  ? Boolean((Array.isArray(w && w.license) && w.license.length) || (Array.isArray(w && w.link) && w.link.length))
+                  : (source === "arxiv"
+                      ? Boolean(w && w.pdf)
+                      : Boolean(w && (w.pdf || w.link)))) ;
+            latestResults.sort((a, b) => (isOpen(b) ? 1 : 0) - (isOpen(a) ? 1 : 0));
+          }
+
+          renderResults(which, latestResults, source);
+          metaSpan.textContent = `${data.meta.count.toLocaleString()} total – cursor: ${data.meta.next_cursor ?? "∅"}`;
+          nextBtn.disabled = !data.meta.next_cursor;
+          nextBtn.dataset.next = data.meta.next_cursor || "";
+          const hasData = latestResults.length > 0;
+          downloadJsonBtn.disabled = !hasData;
+          downloadCsvBtn.disabled = !hasData;
+          updateDownloadAllAvailability();
+        } catch (err) {
+          console.error(err);
+          metaSpan.textContent = String(err.message || err) || "Error";
+          downloadJsonBtn.disabled = true;
+          downloadCsvBtn.disabled = true;
+          updateDownloadAllAvailability();
+        }
+      }
+
+      function renderResults(which, items, source = "openalex") {
+        results.textContent = "";
+        if (!items || items.length === 0) {
+          results.innerHTML = `<div class="muted">No results.</div>`;
+          return;
+        }
+        if (which === "authors") {
+          for (const a of items) {
+            const card = document.createElement("div");
+            card.className = "card";
+            card.innerHTML = `
+              <div class="row"><strong>${escapeHtml(a.display_name || "(no name)")}</strong></div>
+              <div class="row muted">Works: ${a.works_count ?? "?"} · Cited by: ${a.cited_by_count ?? "?"}</div>
+              <div class="row"><a href="${a.id}" target="_blank" rel="noopener">OpenAlex</a></div>
+            `;
+            results.appendChild(card);
+          }
+        } else {
+          for (const w of items) {
+            const v = toViewWork(w, source);
+            const sourceEngine = source === "crossref" ? "Crossref" : (source === "arxiv" ? "arXiv" : "OpenAlex");
+            const skills = Array.isArray(v.skills) && v.skills.length ? `<div class=\"row\"><span class=\"muted\">Skills:</span> ${escapeHtml(v.skills.slice(0,5).join(", "))}</div>` : "";
+            const card = document.createElement("div");
+            card.className = "card";
+            card.innerHTML = `
+              <div class="row"><strong>${escapeHtml(v.title || "(untitled)")}</strong>${v.year ? ` (${v.year})` : ""} ${v.open ? '<span class="badge badge-oa">OA</span>' : ''}</div>
+              <div class="row muted">${v.venue ? `${escapeHtml(v.venue)} · ` : ""}<span class="badge">${sourceEngine}</span></div>
+              ${skills}
+              <div class="row">${v.doi ? `<span class=\"muted\">DOI:</span> <a href=\"https://doi.org/${encodeURIComponent(v.doi)}\" target=\"_blank\" rel=\"noopener\">${escapeHtml(v.doi)}</a> · ` : ""}<span class="muted">Publisher/Author:</span> ${escapeHtml(v.publisher_or_author || "")}</div>
+              <div class="row"><a href="${v.link}" target="_blank" rel="noopener">Link to paper</a></div>
+            `;
+            results.appendChild(card);
+          }
+        }
+      }
+
+      function toViewWork(w, source) {
+        if (source === "crossref") {
+          const title = Array.isArray(w && w.title) && w.title.length ? w.title[0] : (Array.isArray(w && w["container-title"]) && w["container-title"][0]) || "";
+          const issued = w && w.issued && Array.isArray(w.issued["date-parts"]) && w.issued["date-parts"][0] ? w.issued["date-parts"][0][0] : undefined;
+          const venue = Array.isArray(w && w["container-title"]) && w["container-title"].length ? w["container-title"][0] : "";
+          const link = (Array.isArray(w && w.link) && w.link.length && w.link[0].URL) || (w && w.URL) || "";
+          const doi = w && w.DOI || "";
+          const open = (Array.isArray(w && w.license) && w.license.length > 0) || (Array.isArray(w && w.link) && w.link.length > 0);
+          const authors = Array.isArray(w && w.author) ? w.author : [];
+          const firstAuthor = authors.length ? (authors[0].family || authors[0].name || "") : "";
+          const publisher = w && w.publisher || "";
+          const skills = Array.isArray(w && w.subject) ? w.subject.slice(0,5) : [];
+          return { id: w && w.URL || doi || title, title, year: issued, venue, doi, link, open, skills, publisher_or_author: publisher || firstAuthor };
+        }
+        if (source === "arxiv") {
+          const title = w && w.title || "";
+          const year = w && w.year || undefined;
+          const venue = "arXiv";
+          const doi = w && w.doi || "";
+          const link = w && (w.pdf || w.link) || "";
+          const open = true; // arXiv is OA
+          const skills = Array.isArray(w && w.categories) ? w.categories.slice(0,5) : [];
+          const authorOrPublisher = Array.isArray(w && w.authors) && w.authors.length ? w.authors[0] : "";
+          return { id: link || doi || title, title, year, venue, doi, link, open, skills, publisher_or_author: authorOrPublisher };
+        }
+        if (source === "semantic-scholar") {
+          const title = w && w.title || "";
+          const year = w && w.year || undefined;
+          const venue = (w && (w.publicationVenue && w.publicationVenue.name)) || (w && w.venue) || "";
+          const doi = w && w.externalIds && (w.externalIds.DOI || w.externalIds.Doi) || "";
+          const link = (w && w.openAccessPdf && w.openAccessPdf.url) || (w && w.url) || "";
+          const open = Boolean((w && w.isOpenAccess) || (w && w.openAccessPdf));
+          const skills = Array.isArray(w && w.fieldsOfStudy) ? w.fieldsOfStudy.slice(0,5) : [];
+          const authorOrPublisher = (Array.isArray(w && w.authors) && w.authors.length ? w.authors[0].name : "");
+          return { id: link || doi || title, title, year, venue, doi, link, open, skills, publisher_or_author: authorOrPublisher };
+        }
+        const title = w && w.display_name || "";
+        const year = w && w.publication_year || undefined;
+        const venue = (w && w.primary_location && w.primary_location.display_name) || (w && w.host_venue && w.host_venue.display_name) || "";
+        const link = (w && w.best_oa_location && (w.best_oa_location.landing_page_url || w.best_oa_location.url)) || (w && w.primary_location && w.primary_location.landing_page_url) || (w && w.id) || "";
+        const doi = w && w.doi || "";
+        const open = Boolean((w && w.best_oa_location) || (w && w.open_access && w.open_access.is_oa));
+        const skills = Array.isArray(w && w.concepts) ? w.concepts.sort((a,b)=>(b?.score||0)-(a?.score||0)).slice(0,5).map(c=>c?.display_name||c?.id||"").filter(Boolean) : [];
+        const publisher = (w && w.host_venue && w.host_venue.publisher) || "";
+        const fa = firstAuthor(w);
+        return { id: w && w.id || link || doi || title, title, year, venue, doi, link, open, skills, publisher_or_author: publisher || fa || "" };
+      }
+
+      function escapeHtml(s) {
+        return String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      }
+
+      function renderKeywordFilters() {
+        keywordFilters.textContent = "";
+        for (const cat of categories) {
+          const wrap = document.createElement("div");
+          wrap.className = "card";
+          const id = `kw-${cat.id}`;
+          const items = cat.terms.map((t, idx) => `
+            <label style="display:inline-flex; gap:.35rem; align-items:center; margin:.15rem .5rem .15rem 0;">
+              <input type="checkbox" data-cat="${cat.id}" data-term="${escapeHtml(t)}" />
+              <span>${escapeHtml(t)}</span>
+            </label>
+          `).join("");
+          wrap.innerHTML = `
+            <div class="row"><strong>${escapeHtml(cat.label)}</strong></div>
+            <div class="row keywords">${items}</div>
+          `;
+          keywordFilters.appendChild(wrap);
+        }
+        // Event delegation
+        keywordFilters.addEventListener("change", (e) => {
+          const target = e.target;
+          if (!(target instanceof HTMLInputElement)) return;
+          const cat = target.getAttribute("data-cat");
+          const term = target.getAttribute("data-term");
+          if (!cat || !term) return;
+          const arr = selectedByCategory[cat] || (selectedByCategory[cat] = []);
+          if (target.checked) {
+            if (!arr.includes(term)) arr.push(term);
+          } else {
+            const i = arr.indexOf(term);
+            if (i >= 0) arr.splice(i, 1);
+          }
+        });
+      }
+
+      function composeQuery() {
+        const free = q.value.trim();
+        const selections = { ...selectedByCategory, extra: free };
+        const query = buildQueryFromSelections(selections);
+        return query || free;
+      }
+
+      function downloadBlob(content, filename, mime) {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      function resultsToCsv(items, which, source = "openalex") {
+        if (!Array.isArray(items) || items.length === 0) return "";
+        if (which === "authors") {
+          const header = ["id","display_name","works_count","cited_by_count"]; 
+          const rows = items.map(a => [
+            safe(a.id),
+            safe(a.display_name),
+            num(a.works_count),
+            num(a.cited_by_count)
+          ]);
+          return toCsv([header, ...rows]);
+        } else {
+          // Works → custom export schema requested by user
+          const header = [
+            "query",
+            "title",
+            "skills",
+            "source_engine",
+            "doi",
+            "publication_year",
+            "publisher_or_author",
+            "link"
+          ];
+          const rows = items.map(w => {
+            const mapped = mapWorkForExport(w, q.value.trim(), source);
+            return [
+              safe(mapped.query),
+              safe(mapped.title),
+              safe(mapped.skills.join("; ")),
+              safe(mapped.source_engine),
+              safe(mapped.doi),
+              num(mapped.publication_year),
+              safe(mapped.publisher_or_author),
+              safe(mapped.link)
+            ];
+          });
+          return toCsv([header, ...rows]);
+        }
+      }
+
+      function safe(v) { return (v == null ? "" : String(v)); }
+      function num(v) { return (typeof v === "number" ? String(v) : (v == null ? "" : String(v))); }
+      function firstAuthor(w) {
+        const list = Array.isArray(w && w.authorships) ? w.authorships : [];
+        return list.length ? (list[0].author && list[0].author.display_name ? list[0].author.display_name : "") : "";
+      }
+      function toCsv(rows) {
+        return rows.map(r => r.map(cell => {
+          const s = String(cell);
+          return /[",\n]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s;
+        }).join(",")).join("\n");
+      }
+
+      downloadJsonBtn.addEventListener("click", () => {
+        const which = entity.value;
+        const query = q.value.trim();
+        const ts = new Date().toISOString().replaceAll(":", "-");
+        const filename = `openalex-${which}-${query || "query"}-${ts}.json`;
+        const payload = which === "works"
+          ? latestResults.map(w => mapWorkForExport(w, query))
+          : latestResults;
+        downloadBlob(JSON.stringify(payload, null, 2), filename, "application/json;charset=utf-8");
+      });
+
+      downloadCsvBtn.addEventListener("click", () => {
+        const which = entity.value;
+        const query = q.value.trim();
+        const ts = new Date().toISOString().replaceAll(":", "-");
+        const filename = `openalex-${which}-${query || "query"}-${ts}.csv`;
+        const csv = resultsToCsv(latestResults, which);
+        downloadBlob(csv, filename, "text/csv;charset=utf-8");
+      });
+
+      downloadAllBtn.addEventListener("click", async () => {
+        const which = entity.value;
+        const source = sourceSel.value;
+        const query = q.value.trim();
+        if (source !== "openalex" || which !== "works") return; // safety
+        downloadAllBtn.disabled = true;
+        try {
+          const all = await downloadAllOpenAlexWorks(query, { perPage: 200, delayMs: 300 });
+          const ts = new Date().toISOString().replaceAll(":", "-");
+          const filename = `openalex-works-${query || "query"}-all-${ts}.json`;
+          const payload = all.map(w => mapWorkForExport(w, query));
+          downloadBlob(JSON.stringify(payload, null, 2), filename, "application/json;charset=utf-8");
+        } finally {
+          downloadAllBtn.disabled = false;
+          progressEl.value = 0; progressEl.max = 1; progressLabel.textContent = "";
+        }
+      });
+
+      async function downloadAllOpenAlexWorks(query, { perPage = 200, delayMs = 300 } = {}) {
+        let cursorAll = "*";
+        /** @type {any[]} */
+        const collected = [];
+        let total = 0; let fetched = 0;
+        while (cursorAll) {
+          const qs = new URLSearchParams({ source: 'openalex', entity: 'works', q: query, per_page: String(perPage), cursor: String(cursorAll) });
+          const url = `${API_BASE || ''}/api/search?${qs.toString()}`.replace(/\/+api/, '/api');
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`Backend error ${resp.status}`);
+          const data = await resp.json();
+          if (total === 0) {
+            total = data && data.meta && typeof data.meta.count === "number" ? data.meta.count : 0;
+            // Progress bar setup
+            progressEl.max = Math.max(1, total);
+          }
+          const items = Array.isArray(data.results) ? data.results : [];
+          collected.push(...items);
+          fetched += items.length;
+          progressEl.value = Math.min(progressEl.max, fetched);
+          progressLabel.textContent = `${fetched.toLocaleString()} of ${total.toLocaleString()} fetched`;
+          cursorAll = data && data.meta ? data.meta.next_cursor : null;
+          if (!cursorAll) break;
+          await sleep(delayMs);
+        }
+        // OA-first ordering
+        collected.sort((a, b) => (Boolean((b && b.best_oa_location) || (b && b.open_access && b.open_access.is_oa)) ? 1 : 0) - (Boolean((a && a.best_oa_location) || (a && a.open_access && a.open_access.is_oa)) ? 1 : 0));
+        return collected;
+      }
+
+      function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+      function updateDownloadAllAvailability() {
+        const source = sourceSel.value;
+        const which = entity.value;
+        const enabled = source === "openalex" && which === "works";
+        downloadAllBtn.disabled = !enabled;
+      }
+
+      function mapWorkForExport(w, query, source = "openalex") {
+        const title = w && w.display_name ? w.display_name : "";
+        const concepts = Array.isArray(w && w.concepts) ? w.concepts : [];
+        // Use top 5 concept names as "skills"
+        const skills = concepts
+          .sort((a, b) => (b && b.score || 0) - (a && a.score || 0))
+          .slice(0, 5)
+          .map(c => c && (c.display_name || c.id) || "")
+          .filter(Boolean);
+
+        // Source/venue best-effort mapping
+        const venueName =
+          (w && w.primary_location && w.primary_location.source && w.primary_location.source.display_name)
+          || (w && w.primary_location && w.primary_location.display_name)
+          || (w && w.host_venue && w.host_venue.display_name)
+          || "";
+
+        // Publisher or first author
+        const publisher = (w && w.host_venue && w.host_venue.publisher) || "";
+        const fa = firstAuthor(w);
+        const publisherOrAuthor = publisher || fa || "";
+
+        // Best link
+        const bestOpen = w && w.best_oa_location && (w.best_oa_location.landing_page_url || w.best_oa_location.url);
+        const landing = w && w.primary_location && w.primary_location.landing_page_url;
+        const link = bestOpen || landing || (w && w.id) || "";
+
+        return {
+          query: query || "",
+          title,
+          skills,
+          source_engine: venueName,
+          doi: w && w.doi || "",
+          publication_year: w && w.publication_year || null,
+          publisher_or_author: publisherOrAuthor,
+          link
+        };
+      }
+
+      // Initial example query
+      q.value = "transformers";
+      search();
+    </script>
+  </body>
+  </html>
+
+
