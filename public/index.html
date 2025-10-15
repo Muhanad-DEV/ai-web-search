@@ -163,7 +163,14 @@
         search();
       });
 
-      const API_BASE = (window.API_BASE_OVERRIDE || "").trim();
+      const API_BASE = (() => {
+        try {
+          const url = new URL(window.location.href);
+          const fromQuery = url.searchParams.get('api_base');
+          if (fromQuery) return fromQuery.replace(/\/$/, '');
+        } catch {}
+        return (window.API_BASE_OVERRIDE || "").trim().replace(/\/$/, '');
+      })();
 
       async function search(isBack = false) {
         const query = composeQuery();
