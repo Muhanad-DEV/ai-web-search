@@ -4,14 +4,16 @@ This is a lightweight, browser-friendly OpenAlex client with a simple demo page.
 
 ## Quick Start
 
-1. Serve the folder (any static server). On macOS:
+1. Start the Flask backend (installs deps and runs the server):
 
 ```bash
 cd /Users/stan/Downloads/ai-search
-python3 -m http.server 8000
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
 ```
 
-2. Visit `http://localhost:8000/public/`.
+2. Open `http://localhost:8000/public/` in your browser.
 
 ## Use in your site
 
@@ -26,19 +28,11 @@ python3 -m http.server 8000
 
 ## API
 
-`OpenAlexClient` constructor options:
+Backend API:
 
-- `baseUrl` (string, default `https://api.openalex.org`)
-- `mailto` (string, optional; recommended by OpenAlex for polite use)
-
-Methods:
-
-- `searchWorks({ search, filter, sort, perPage, cursor })`
-- `searchAuthors({ search, filter, sort, perPage, cursor })`
-- `getWork(idOrDoi)` – accepts OpenAlex work id like `W2741809807` or a DOI like `10.1038/nature14539`
-- `getAuthor(id)` – accepts OpenAlex author id like `A1969205036`
-
-All list endpoints return `{ results, meta }` where `meta.next_cursor` can be used for pagination.
+- `GET /api/search?source={openalex|crossref|arxiv}&entity=works&q=QUERY&per_page=10&cursor=*`
+  - Returns `{ results, meta: { count, next_cursor } }`
+  - arXiv results are normalized and always open access
 
 ## Notes
 

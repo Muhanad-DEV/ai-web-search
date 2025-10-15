@@ -79,13 +79,29 @@
       <span id="progress-label" class="muted"></span>
     </div>
 
-    <script type="module">
-      import { OpenAlexClient } from "../src/openalex.js";
-      import { CrossrefClient } from "../src/crossref.js";
-      import { ArxivClient } from "../src/arxiv.js";
-      import { categories, buildQueryFromSelections } from "../src/keywords.js";
+    <script>
+      // Inline keywords (replaces external JS)
+      const categories = [
+        { id: "technology", label: "Technology (MASS & Autonomy)", terms: [
+          "Maritime Autonomous Surface Ship*","Autonomous Ship*","Autonomous vessel*","Unmanned Ship*","Remote Ship*","smart ship*","Autonomous shipping","Remotely Operated Ship","Autonomous merchant ship*","Remote Operation Centre*","Remote Operating Centre","Remote control Centre*","shore control centre","Onshore operation centre"
+        ]},
+        { id: "human", label: "Human dimension", terms: [
+          "Human Element*","Human Factor*","Seafarer*","E-farer","non-seafarer*","Crew","Operator*","remote operator*","master*","navigator*","Trust in autonomy","onboard personnel","ship personnel","human oversight","human intervention","mariner*","Human-Machine Interaction","Dynamic human-machine system","Human-Machine teaming","Human-Machine cooperation"
+        ]},
+        { id: "competency", label: "Competencies & Policy", terms: [
+          "Competenc*","Skill*","Conceptual Framework*","Framework Develop*","Qualification*","Proficienc*","barrier*","challenge*","obstacle*","Training","Education","Responsibilities","barriers","challenges","Workload","Cognitive Load","Situational Awareness","Decision Making","curriculum development","training programs","guidelines","standards","Regulatory","IMO","Policy","STCW"
+        ]}
+      ];
+      function buildQueryFromSelections(selections) {
+        const parts = [];
+        for (const cat of categories) {
+          const chosen = selections[cat.id] && selections[cat.id].length ? selections[cat.id] : [];
+          if (chosen.length) parts.push(`(${chosen.join(" OR ")})`);
+        }
+        if (selections.extra && selections.extra.trim()) parts.push(`(${selections.extra.trim()})`);
+        return parts.join(" AND ");
+      }
 
-      const client = new OpenAlexClient({ mailto: "Muhanadalmoon@gmail.com" });
       const $ = (sel) => document.querySelector(sel);
       const q = $("#q");
       const sourceSel = $("#source");
@@ -107,9 +123,6 @@
       let cursor = "*";
       /** @type {string[]} */
       const cursorStack = [];
-
-      const crossref = new CrossrefClient({ mailto: "Muhanadalmoon@gmail.com" });
-      const arxiv = new ArxivClient();
 
       /** @type {any[]} */
       let latestResults = [];
@@ -163,21 +176,10 @@
         nextBtn.dataset.next = "";
 
         try {
-          const params = { search: query, perPage: 10, cursor };
-          let data;
-          if (source === "crossref" && which === "works") {
-            data = await crossref.searchWorks(params);
-          } else if (source === "semantic-scholar" && which === "works") {
-            const offsetCursor = cursor === "*" ? "*" : String(cursor);
-            data = await s2.searchPapers({ search: query, perPage: params.perPage, cursor: offsetCursor });
-          } else if (source === "arxiv" && which === "works") {
-            const offsetCursor = cursor === "*" ? "*" : String(cursor);
-            data = await arxiv.searchWorks({ search: query, perPage: params.perPage, cursor: offsetCursor });
-          } else if (which === "authors") {
-            data = await client.searchAuthors(params);
-          } else {
-            data = await client.searchWorks(params);
-          }
+          const qs = new URLSearchParams({ source, entity: which, q: query, per_page: String(10), cursor: String(cursor || '*') });
+          const resp = await fetch(`/api/search?${qs.toString()}`);
+          if (!resp.ok) throw new Error(`Backend error ${resp.status}`);
+          const data = await resp.json();
           latestResults = Array.isArray(data.results) ? data.results : [];
 
           // Open-access-first sorting for works
@@ -448,7 +450,10 @@
         const collected = [];
         let total = 0; let fetched = 0;
         while (cursorAll) {
-          const data = await client.searchWorks({ search: query, perPage, cursor: cursorAll });
+          const qs = new URLSearchParams({ source: 'openalex', entity: 'works', q: query, per_page: String(perPage), cursor: String(cursorAll) });
+          const resp = await fetch(`/api/search?${qs.toString()}`);
+          if (!resp.ok) throw new Error(`Backend error ${resp.status}`);
+          const data = await resp.json();
           if (total === 0) {
             total = data && data.meta && typeof data.meta.count === "number" ? data.meta.count : 0;
             // Progress bar setup
