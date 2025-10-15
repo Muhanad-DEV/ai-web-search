@@ -4,13 +4,16 @@ This is a lightweight, browser-friendly OpenAlex client with a simple demo page.
 
 ## Quick Start
 
-1. Start the Flask backend (installs deps and runs the server):
+1. Start the FastAPI backend (installs deps and runs the server):
 
 ```bash
 cd /Users/stan/Downloads/ai-search
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python app.py
+# Dev (auto-reload):
+uvicorn app:app --reload --port 8000
+# Prod (Render, etc.):
+gunicorn -k uvicorn.workers.UvicornWorker app:app
 ```
 
 2. Open `http://localhost:8000/public/` in your browser.
@@ -28,7 +31,7 @@ python app.py
 
 ## API
 
-Backend API:
+Backend API (FastAPI):
 
 - `GET /api/search?source={openalex|crossref|arxiv}&entity=works&q=QUERY&per_page=10&cursor=*`
   - Returns `{ results, meta: { count, next_cursor } }`

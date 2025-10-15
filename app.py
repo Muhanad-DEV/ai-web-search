@@ -1,19 +1,39 @@
 import os
 from urllib.parse import urlencode
-from flask import Flask, send_from_directory, request, jsonify
+from typing import Optional, Dict, Any
+
 import requests
+import feedparser
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 
-app = Flask(__name__, static_folder="public", static_url_path="/public")
+app = FastAPI(title="AI Web Search API")
+
+# CORS so GitHub Pages (or any static host) can call the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+# Serve /public for local use; on GitHub Pages the frontend is hosted separately
+if os.path.isdir("public"):
+    app.mount("/public", StaticFiles(directory="public", html=True), name="public")
 
 
-def http_get_json(url: str, headers: dict | None = None):
+def http_get_json(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
     resp = requests.get(url, headers=headers or {"Accept": "application/json"}, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
 
-def search_openalex(q: str, per_page: int, cursor: str):
+def search_openalex(q: str, per_page: int, cursor: str) -> Dict[str, Any]:
     base = "https://api.openalex.org/works"
     params = {"search": q or None, "per_page": per_page, "cursor": cursor or "*"}
     url = f"{base}?{urlencode({k: v for k, v in params.items() if v})}"
@@ -21,7 +41,7 @@ def search_openalex(q: str, per_page: int, cursor: str):
     return data
 
 
-def search_crossref(q: str, per_page: int, cursor: str):
+def search_crossref(q: str, per_page: int, cursor: str) -> Dict[str, Any]:
     base = "https://api.crossref.org/works"
     offset = 0 if not cursor or cursor == "*" else max(0, int(cursor))
     params = {"query": q or "", "rows": per_page, "offset": offset, "sort": "relevance", "order": "desc"}
@@ -34,7 +54,7 @@ def search_crossref(q: str, per_page: int, cursor: str):
     return {"results": items, "meta": {"count": total, "next_cursor": next_cursor}}
 
 
-def search_arxiv(q: str, per_page: int, cursor: str):
+def search_arxiv(q: str, per_page: int, cursor: str) -> Dict[str, Any]:
     start = 0 if not cursor or cursor == "*" else max(0, int(cursor))
     base = "https://export.arxiv.org/api/query"
     params = {
@@ -44,9 +64,6 @@ def search_arxiv(q: str, per_page: int, cursor: str):
         "sortBy": "relevance",
     }
     url = f"{base}?{urlencode(params)}"
-    # arXiv returns Atom XML; proxy it raw to the frontend parser is cumbersome.
-    # Instead, do a quick server-side parse for the minimal fields using feedparser.
-    import feedparser  # lightweight
     feed = feedparser.parse(url)
     total = getattr(feed, "opensearch_totalresults", None)
     try:
@@ -83,38 +100,40 @@ def search_arxiv(q: str, per_page: int, cursor: str):
     next_cursor = str(start + len(results)) if start + len(results) < total_i else None
     return {"results": results, "meta": {"count": total_i, "next_cursor": next_cursor}}
 
-
 @app.get("/")
 def root():
-    return send_from_directory(app.static_folder, "index.html")
+    # Redirect to /public/ for local usage
+    return RedirectResponse(url="/public/")
 
 
 @app.get("/api/search")
-def api_search():
-    source = request.args.get("source", "openalex")
-    entity = request.args.get("entity", "works")
-    q = request.args.get("q", "")
-    per_page = min(max(int(request.args.get("per_page", 10)), 1), 200)
-    cursor = request.args.get("cursor", "*")
-
+def api_search(
+    source: str = Query("openalex", enum=["openalex", "crossref", "arxiv"]),
+    entity: str = Query("works"),
+    q: str = Query(""),
+    per_page: int = Query(10, ge=1, le=200),
+    cursor: str = Query("*"),
+):
     try:
         if entity != "works":
-            return jsonify({"results": [], "meta": {"count": 0, "next_cursor": None}})
+            return JSONResponse({"results": [], "meta": {"count": 0, "next_cursor": None}})
         if source == "crossref":
             data = search_crossref(q, per_page, cursor)
         elif source == "arxiv":
             data = search_arxiv(q, per_page, cursor)
         else:
             data = search_openalex(q, per_page, cursor)
-        return jsonify(data)
+        return JSONResponse(data)
     except requests.HTTPError as e:
-        return jsonify({"error": str(e), "details": getattr(e.response, "text", "")}), 502
+        return JSONResponse({"error": str(e), "details": getattr(e.response, "text", "")}, status_code=502)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 if __name__ == "__main__":
+    # Local dev: uvicorn app:app --reload
+    import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
 
 
