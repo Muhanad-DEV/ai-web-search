@@ -163,6 +163,8 @@
         search();
       });
 
+      const API_BASE = (window.API_BASE_OVERRIDE || "").trim();
+
       async function search(isBack = false) {
         const query = composeQuery();
         const which = entity.value;
@@ -177,7 +179,8 @@
 
         try {
           const qs = new URLSearchParams({ source, entity: which, q: query, per_page: String(10), cursor: String(cursor || '*') });
-          const resp = await fetch(`/api/search?${qs.toString()}`);
+          const url = `${API_BASE || ''}/api/search?${qs.toString()}`.replace(/\/+api/, '/api');
+          const resp = await fetch(url);
           if (!resp.ok) throw new Error(`Backend error ${resp.status}`);
           const data = await resp.json();
           latestResults = Array.isArray(data.results) ? data.results : [];
@@ -451,7 +454,8 @@
         let total = 0; let fetched = 0;
         while (cursorAll) {
           const qs = new URLSearchParams({ source: 'openalex', entity: 'works', q: query, per_page: String(perPage), cursor: String(cursorAll) });
-          const resp = await fetch(`/api/search?${qs.toString()}`);
+          const url = `${API_BASE || ''}/api/search?${qs.toString()}`.replace(/\/+api/, '/api');
+          const resp = await fetch(url);
           if (!resp.ok) throw new Error(`Backend error ${resp.status}`);
           const data = await resp.json();
           if (total === 0) {
