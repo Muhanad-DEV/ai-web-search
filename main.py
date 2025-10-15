@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import RedirectResponse
 
-from .routes.api import api_router
+from routes.api import api_router
 
 
 def create_app() -> FastAPI:
