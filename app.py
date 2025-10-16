@@ -39,6 +39,45 @@ def http_get_json(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
     return resp.json()
 
 
+def is_oa_openalex_work(w: Dict[str, Any]) -> bool:
+    return bool(
+        (w and w.get("best_oa_location"))
+        or (w and w.get("open_access") and w["open_access"].get("is_oa"))
+    )
+
+
+def is_oa_crossref_item(w: Dict[str, Any]) -> bool:
+    # Heuristic: license array present or link array present
+    return bool(
+        (isinstance(w.get("license"), list) and len(w["license"]) > 0)
+        or (isinstance(w.get("link"), list) and len(w["link"]) > 0)
+    )
+
+
+def is_oa_arxiv_item(w: Dict[str, Any]) -> bool:
+    # arXiv is generally OA, but prefer pdf/link presence
+    return bool(w.get("pdf") or w.get("link") or True)
+
+
+def sort_oa_first(source: str, entity: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        if entity != "works":
+            return data
+        items = data.get("results")
+        if not isinstance(items, list):
+            return data
+        if source == "openalex":
+            items.sort(key=lambda w: 1 if is_oa_openalex_work(w) else 0, reverse=True)
+        elif source == "crossref":
+            items.sort(key=lambda w: 1 if is_oa_crossref_item(w) else 0, reverse=True)
+        elif source == "arxiv":
+            items.sort(key=lambda w: 1 if is_oa_arxiv_item(w) else 0, reverse=True)
+        data["results"] = items
+        return data
+    except Exception:
+        return data
+
+
 def search_openalex_works(q: str, per_page: int, cursor: str) -> Dict[str, Any]:
     base = "https://api.openalex.org/works"
     params = {"search": q or None, "per_page": per_page, "cursor": cursor or "*"}
@@ -141,6 +180,8 @@ def api_search(
                 data = search_arxiv(q, per_page, cursor)
             else:
                 data = search_openalex_works(q, per_page, cursor)
+        # OA-first ordering for works across sources
+        data = sort_oa_first(source=source, entity=entity, data=data)
         return JSONResponse(data)
     except requests.HTTPError as e:
         return JSONResponse({"error": str(e), "details": getattr(e.response, "text", "")}, status_code=502)
